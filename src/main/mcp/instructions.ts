@@ -62,6 +62,7 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
     // mistake is splitting one file across calls, not asking for too much in one. The default
     // per-file budget already covers an ordinary source file whole.
     'read batches paths, lists folders, expands globs and returns images — use one call, and read a file whole rather than in windows. A start_line/end_line range applies to every file the call reads; use it only for a known region.',
+    'Prefer find for searches, copy_file for backups and apply_patch for edits.',
     ...(windows
       ? [
           // The gap that produced the most repeated shell failures: a POSIX shell expands globs
@@ -79,7 +80,7 @@ function coreInstructions(ctx: ToolContext, platform: NodeJS.Platform): string {
         ]),
     'Never send read’s line-number prefixes to apply_patch; they are display metadata, not file content.',
     'apply_patch is the only way to change files: it adds, updates, moves and deletes, and it is atomic across files.',
-    'exec_command runs git, npm, builds, tests and anything else; a long-running one gives you a session_id to continue with write_stdin.',
+    'exec_command runs git/build/tests. Poll long runs with poll_command; write_stdin sends input.',
     // The recorded sessions show this done by hand — several checks glued together with
     // Write-Output banners inside one cmd — whenever the model happened to think of it, and
     // split across separate calls whenever it did not. `cmds` is that habit made explicit, and

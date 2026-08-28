@@ -1,13 +1,13 @@
 /**
  * The Core connector: reading, changing and running code on this PC.
  *
- * Seven tools at the absolute maximum, and usually five. That number is the design (see
+ * Ten tools at the absolute maximum, and usually seven. That number is the design (see
  * `docs/tool-surface.md` §3): a no-query discovery pull against this connector returns
  * every schema here at once, so the surface is sized for the worst case rather than for
  * the case where the harness happens to ask a narrow question.
  *
- * What used to be forty-five tools did not become seven by dropping capability. It became
- * seven by separating *primitives* from *procedures*: `exec_command` can run git, so `git`
+ * What used to be forty-five tools did not become ten by dropping capability. It became
+ * ten by separating *primitives* from *procedures*: `exec_command` can run git, so `git`
  * is a skill rather than a tool; `read` can open a directory, a text file or an image,
  * because those are three shapes of one question. Anything that reads as "and also, for
  * this special case…" belongs in a skill over these primitives, not in a schema every
@@ -78,6 +78,9 @@ import {
   EXEC_COMMAND_WORKDIR_DESCRIPTION,
   EXEC_COMMAND_YIELD_TIME_DESCRIPTION,
   MAX_OUTPUT_TOKENS_DESCRIPTION,
+  POLL_COMMAND_DESCRIPTION,
+  POLL_COMMAND_SESSION_ID_DESCRIPTION,
+  POLL_COMMAND_YIELD_TIME_DESCRIPTION,
   WRITE_STDIN_CHARS_DESCRIPTION,
   WRITE_STDIN_DESCRIPTION,
   WRITE_STDIN_SESSION_ID_DESCRIPTION,
@@ -140,6 +143,7 @@ import {
   resolveCwd,
   resolveIn,
   type SurfaceRegistrar,
+  type ToolAnnotations,
   type ToolResult
 } from './kernel.js';
 import { registerSessionTool as registerSessionSearchReadTool } from './session-tool.js';
@@ -154,6 +158,42 @@ const MAX_READ_TARGETS = 40;
 const GLOB_SCAN_LIMIT = 5_000;
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
+
+const LOCAL_INSPECTION_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false
+};
+
+const ADDITIVE_LOCAL_FILE_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false
+};
+
+const MUTATING_LOCAL_FILE_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false
+};
+
+const LOCAL_PROCESS_POLL_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false
+};
+
+const UNRESTRICTED_EXEC_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+};
 
 // Codex advertises these as JSON Schema `number`, but serde still deserializes them into
 // integer Rust types. Refinements preserve the model-visible number schema while rejecting
@@ -181,7 +221,7 @@ const unifiedExecOutputSchema = z
     session_id: z
       .number()
       .optional()
-      .describe('Session identifier to pass to write_stdin when the process is still running.'),
+      .describe('Session identifier to pass to poll_command or write_stdin when the process is still running.'),
     original_token_count: z.number().optional().describe('Approximate token count before output truncation.'),
     output: z.string().describe('Command output text, possibly truncated.')
   })
@@ -262,7 +302,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               )
           })
           .strict(),
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+        annotations: LOCAL_INSPECTION_ANNOTATIONS
       },
       async ({ paths, start_line, end_line, max_bytes }) =>
         guard('read', async () => {
@@ -390,7 +430,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           .object({
             path: z.string().describe(VIEW_IMAGE_PATH_DESCRIPTION)
           })
-          .strict()
+          .strict(),
+        annotations: LOCAL_INSPECTION_ANNOTATIONS
       },
       async ({ path }) =>
         guard('view_image', async () => {
@@ -425,7 +466,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
   // form reads a monotonically widening value, so switching command execution on mid-run
   // would delete `find` from under a cached tool list. The decision is frozen for the life
   // of the endpoint instead, which is the same rule every other tool here follows.
-  if (reg.findExposed) {
+  if (exposedCaps.search) {
     reg.register(
       'find',
       {
@@ -465,7 +506,7 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             }
           })
           .strict(),
-        annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+        annotations: LOCAL_INSPECTION_ANNOTATIONS
       },
       async ({ query, path: p, mode, include, exclude, case_sensitive, regex, max_results }) =>
         reg.guarded('search', 'find', async () => {
@@ -546,6 +587,60 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
     );
   }
 
+
+  // -------------------------------------------------------------- copy_file
+
+  if (exposedCaps.read && exposedCaps.create) {
+    reg.register(
+      'copy_file',
+      {
+        title: 'Copy a file',
+        description:
+          'Create a new file by copying one existing regular file inside approved roots. ' +
+          'The destination parent folder must already exist, the destination must not exist, and POSIX mode bits are preserved. ' +
+          'Use this for backups and exact duplication instead of running cp, copy, chmod or another shell command.',
+        inputSchema: z
+          .object({
+            source: pathArg.describe('Existing regular file inside an approved root.'),
+            destination: pathArg.describe('New file path inside an approved root. It must not already exist.')
+          })
+          .strict(),
+        annotations: ADDITIVE_LOCAL_FILE_ANNOTATIONS
+      },
+      async ({ source, destination }) =>
+        guard('copy_file', async () => {
+          if (!caps.read) return fail('TOOL_DISABLED: copy_file needs file reading, which is disabled in Chat On Steroids.');
+          if (!caps.create) return fail('TOOL_DISABLED: copy_file needs file creation, which is disabled in Chat On Steroids.');
+
+          const from = await resolveIn(ctx.roots, source);
+          const to = await resolveIn(ctx.roots, destination, { allowMissing: true });
+          const sourceStat = await fs.stat(from.real);
+          if (!sourceStat.isFile()) return fail(`${from.virtual} is not a regular file`);
+          const parentStat = await fs.stat(nodePath.dirname(to.real));
+          if (!parentStat.isDirectory()) return fail(`The destination parent for ${to.virtual} is not a folder`);
+
+          let copied = false;
+          try {
+            await fs.copyFile(from.real, to.real, nodeFs.constants.COPYFILE_EXCL);
+            copied = true;
+            if (process.platform !== 'win32') await fs.chmod(to.real, sourceStat.mode & 0o7777);
+          } catch (error) {
+            if (copied) await fs.rm(to.real, { force: true }).catch(() => undefined);
+            if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+              return fail(`${to.virtual} already exists; copy_file never overwrites a destination`);
+            }
+            throw error;
+          }
+
+          noteChanges([{ path: to.virtual, added: 0, removed: 0, approximate: true }]);
+          noteCount(1);
+          noteDetail(`${from.virtual} -> ${to.virtual}`);
+          logInfo(`tool copy_file ${from.virtual} -> ${to.virtual}`);
+          return ok(`Copied ${from.virtual} to ${to.virtual}`);
+        })
+    );
+  }
+
   // ------------------------------------------------------------- apply_patch
 
   if (exposedCaps.create || exposedCaps.edit || exposedCaps.move || exposedCaps.deleteFile) {
@@ -557,7 +652,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
           .object({
             patch: z.string().describe(APPLY_PATCH_ARGUMENT_DESCRIPTION)
           })
-          .strict()
+          .strict(),
+        annotations: MUTATING_LOCAL_FILE_ANNOTATIONS
       },
       async ({ patch }) =>
         guard('apply_patch', async () => {
@@ -624,7 +720,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
               });
             }
           }),
-        outputSchema: unifiedExecOutputSchema
+        outputSchema: unifiedExecOutputSchema,
+        annotations: UNRESTRICTED_EXEC_ANNOTATIONS
       },
       async (input) =>
         reg.guarded('command', 'exec_command', async () => {
@@ -829,6 +926,65 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
         })
     );
 
+
+    reg.register(
+      'poll_command',
+      {
+        description: POLL_COMMAND_DESCRIPTION,
+        inputSchema: z
+          .object({
+            session_id: int32Number.describe(POLL_COMMAND_SESSION_ID_DESCRIPTION),
+            yield_time_ms: unsignedIntegerNumber.optional().describe(POLL_COMMAND_YIELD_TIME_DESCRIPTION),
+            max_output_tokens: unsignedIntegerNumber.optional().describe(MAX_OUTPUT_TOKENS_DESCRIPTION)
+          })
+          .strict(),
+        outputSchema: unifiedExecOutputSchema,
+        annotations: LOCAL_PROCESS_POLL_ANNOTATIONS
+      },
+      async (input) =>
+        reg.guarded('command', 'poll_command', async () => {
+          let asking = provenConversation(currentCaller().requestId, currentCaller().conversationId);
+          const call = currentCall();
+          if (!asking && call?.caller.requestId) {
+            asking = await awaitFreshCallOrigin('poll_command', call.startedAt, IDENTITY_EVIDENCE_MS, {
+              requestId: call.caller.requestId
+            });
+            if (asking) call.caller.conversationId = asking;
+          }
+          if (execOwnershipDenied(input.session_id, asking)) {
+            return fail(
+              `poll_command failed: session ${input.session_id} is not proven to belong to this ChatGPT conversation. Start your own with exec_command or retry after the extension reconnects.`
+            );
+          }
+          try {
+            const output = await unifiedExecManager.writeStdin({
+              processId: input.session_id,
+              input: '',
+              yieldTimeMs: input.yield_time_ms ?? DEFAULT_WRITE_STDIN_YIELD_TIME_MS,
+              maxOutputTokens: input.max_output_tokens,
+              truncationPolicy: EXEC_OUTPUT_CEILING_POLICY
+            });
+            if (output.processId === null) forgetExecOwner(input.session_id);
+            noteExec({
+              ...(output.processId === null ? {} : { id: String(output.processId) }),
+              running: output.processId !== null,
+              exitCode: output.exitCode,
+              timedOut: false,
+              durationMs: output.wallTimeMs
+            });
+            logInfo(`tool poll_command ${input.session_id}`);
+            return {
+              content: [{ type: 'text' as const, text: execCommandResponseText(output) }],
+              structuredContent: execCommandStructuredOutput(output)
+            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return fail(`poll_command failed: ${message}`);
+          }
+        })
+    );
+
+
     reg.register(
       'write_stdin',
       {
@@ -841,7 +997,8 @@ export function registerCoreTools(reg: SurfaceRegistrar): void {
             max_output_tokens: unsignedIntegerNumber.optional().describe(MAX_OUTPUT_TOKENS_DESCRIPTION)
           })
           .strict(),
-        outputSchema: unifiedExecOutputSchema
+        outputSchema: unifiedExecOutputSchema,
+        annotations: UNRESTRICTED_EXEC_ANNOTATIONS
       },
       async (input) =>
         reg.guarded('command', 'write_stdin', async () => {

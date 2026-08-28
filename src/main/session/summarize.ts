@@ -258,6 +258,18 @@ function build(
       };
     }
 
+
+    case 'copy_file': {
+      const source = str(args['source']) ?? '';
+      const destination = str(args['destination']) ?? '';
+      return {
+        kind: 'create',
+        tone: 'good',
+        title: `Copied ${shortPath(source)}`,
+        ...(destination ? { detail: `to ${shortPath(destination)}` } : {})
+      };
+    }
+
     // ------------------------------------------------------------ writes
     //
     // One tool now covers create, edit, move and delete, so the title comes from what
@@ -328,6 +340,11 @@ function build(
               : `Waited on session ${id}`.trim();
       return { kind: 'process', tone: signal === 'kill' ? 'warn' : 'neutral', title };
     }
+    case 'poll_command': {
+      const id = str(args['session_id']) ?? '';
+      return { kind: 'process', tone: 'neutral', title: `Waited on session ${id}`.trim() };
+    }
+
 
     // ------------------------------------------------------------ screen
     case 'observe': {

@@ -9,6 +9,16 @@ The app and the `extension/` companion are versioned together. **Reload the
 extension after updating the app**. If their bridge protocols are incompatible,
 the app refuses the extension and asks you to reload the matching copy.
 
+## [2.0.3] ? 2026-08-28
+
+### Fixed
+- **Routine local work no longer has to masquerade as an unrestricted shell call.** Core now
+  publishes explicit truthful MCP annotations, keeps bounded `find` available beside command
+  execution, adds create-only `copy_file` for exact backups, and adds read-only `poll_command` for
+  output waiting. This gives the host the scope metadata needed to apply an app-specific **Allow all
+  actions** policy to safe local primitives without falsely downgrading arbitrary `exec_command` or
+  process input; the host may still confirm genuinely high-risk shell actions.
+
 ## [2.0.2] — 2026-08-26
 
 2.0.2 is the native cross-platform release port. The already-published 2.0.1 release remains the

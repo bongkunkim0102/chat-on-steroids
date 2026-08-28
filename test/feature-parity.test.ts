@@ -53,8 +53,10 @@ describe('portable browser-backed feature parity', () => {
       'read',
       'view_image',
       'find',
+      'copy_file',
       'apply_patch',
       'exec_command',
+      'poll_command',
       'write_stdin',
       'session',
       'agents'

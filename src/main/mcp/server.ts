@@ -284,7 +284,7 @@ export async function startMcpServer(getContext: () => ToolContext): Promise<Mcp
   const stableContext = (surface: SurfaceId): ToolContext => {
     const live = getContext();
     const exposed = exposureFor(surface);
-    if (exposed.find === null) exposed.find = !live.caps.command && live.caps.search;
+    exposed.find = (exposed.find ?? false) || live.caps.search;
     if (exposed.caps === null) {
       exposed.caps = { ...live.caps };
     } else {

@@ -45,15 +45,23 @@ export const EXEC_COMMAND_LOGIN_DESCRIPTION =
     : 'True runs the shell with -l/-i semantics; false disables them. Defaults to true.';
 
 export const WRITE_STDIN_DESCRIPTION =
-  'Writes characters to an existing unified exec session and returns recent output.';
+  'Writes characters to an existing unified exec session and returns recent output. Use poll_command to wait for output without writing.';
 
 export const WRITE_STDIN_SESSION_ID_DESCRIPTION = 'Identifier of the running unified exec session.';
 
 export const WRITE_STDIN_CHARS_DESCRIPTION =
-  'Bytes to write to stdin. Defaults to empty, which polls without writing.';
+  'Bytes to write to stdin. Omit only for compatibility with older clients; use poll_command to wait without writing.';
 
 export const WRITE_STDIN_YIELD_TIME_DESCRIPTION =
   'Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait up to 5000-300000 ms by default but return early when the first output arrives.';
+
+export const POLL_COMMAND_DESCRIPTION =
+  'Returns recent output from an existing unified exec session without writing to its stdin.';
+
+export const POLL_COMMAND_SESSION_ID_DESCRIPTION = 'Identifier of the running unified exec session to poll.';
+
+export const POLL_COMMAND_YIELD_TIME_DESCRIPTION =
+  'Wait for output for 5000-300000 ms, returning early when the process produces output or exits.';
 
 /**
  * `APPLY_PATCH_LARK_GRAMMAR` (`core/src/tools/handlers/apply_patch.lark`).

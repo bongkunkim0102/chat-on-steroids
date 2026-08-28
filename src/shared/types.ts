@@ -457,20 +457,20 @@ export const CAPABILITY_DETAILS: Record<Capability, string> = {
  * The MCP tools each permission actually exposes.
  *
  * Kept beside the capability list rather than written into the prose above, so the tool
- * selector shows what this build really registers. `read` carries `view_image` as well as
- * `read`; `find` exists only where running commands is switched off, which is why it is
- * marked rather than listed flatly (see SurfaceRegistrar.findExposed).
+ * selector shows what this build really registers. `read` carries `view_image`; combining
+ * read with create exposes the create-only `copy_file`; command exposes both unrestricted
+ * execution and the read-only `poll_command` continuation path.
  */
 export const CAPABILITY_TOOLS: Record<Capability, readonly string[]> = {
   browse: ['read'],
   search: ['read', 'find'],
-  read: ['read', 'view_image'],
+  read: ['read', 'view_image', 'copy_file'],
   metadata: ['read'],
-  create: ['apply_patch'],
+  create: ['copy_file', 'apply_patch'],
   edit: ['apply_patch'],
   move: ['apply_patch'],
   deleteFile: ['apply_patch'],
-  command: ['exec_command', 'write_stdin'],
+  command: ['exec_command', 'poll_command', 'write_stdin'],
   screen: ['observe'],
   control: ['computer'],
   clipboardRead: ['computer'],

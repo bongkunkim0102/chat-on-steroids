@@ -572,7 +572,18 @@ describe('surface boundaries', () => {
     everything();
     const names = toolNames(await core('tools/list'));
     // find is absent because exec_command is present — they are mutually exclusive.
-    expect(names).toEqual(['agents', 'apply_patch', 'exec_command', 'read', 'session', 'view_image', 'write_stdin']);
+    expect(names).toEqual([
+      'agents',
+      'apply_patch',
+      'copy_file',
+      'exec_command',
+      'find',
+      'poll_command',
+      'read',
+      'session',
+      'view_image',
+      'write_stdin'
+    ]);
     for (const name of surfaceDefinition('desktop').tools) expect(names, name).not.toContain(name);
   });
 
@@ -638,7 +649,7 @@ describe('surface boundaries', () => {
     for (const name of surfaceDefinition('core').tools) expect(names, name).not.toContain(name);
   });
 
-  it('does not let Desktop discovery freeze Core’s mutually-exclusive tool shape', async () => {
+  it('does not let Desktop discovery freeze Core’s independently gated tool shape', async () => {
     // Core has not been queried yet. A Desktop request must not count as a cached Core
     // snapshot, because ChatGPT caches these two connectors independently.
     ctx.readOnly = false;
@@ -651,8 +662,9 @@ describe('surface boundaries', () => {
     ctx.caps = withCaps({ search: true, command: true, screen: true });
     const names = toolNames(await core('tools/list'));
     expect(names).toContain('exec_command');
+    expect(names).toContain('poll_command');
     expect(names).toContain('write_stdin');
-    expect(names).not.toContain('find');
+    expect(names).toContain('find');
   });
 
   it('never advertises a tool its surface does not declare', async () => {
@@ -751,7 +763,7 @@ describe('surface boundaries', () => {
 
     // Counts are the design: Core is capped at seven live schemas because find and the exec
     // pair cannot both exist, and Desktop is two.
-    expect(coreTools).toHaveLength(7);
+    expect(coreTools).toHaveLength(10);
     expect(desktopTools).toHaveLength(2);
 
     // And the size, which is what a discovery pull actually costs the model on every
@@ -761,7 +773,7 @@ describe('surface boundaries', () => {
     // catches the regression it exists to catch.
     const coreBytes = Buffer.byteLength(JSON.stringify(coreTools), 'utf8');
     const desktopBytes = Buffer.byteLength(JSON.stringify(desktopTools), 'utf8');
-    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(18_000);
+    expect(coreBytes, `core tools/list is ${coreBytes} bytes`).toBeLessThan(24_000);
     expect(desktopBytes, `desktop tools/list is ${desktopBytes} bytes`).toBeLessThan(8_500);
 
     // Per tool as well as per surface, so one schema cannot quietly eat the whole budget
@@ -1011,12 +1023,12 @@ describe('capability gating', () => {
     expect(names).toContain('write_stdin');
   });
 
-  it('drops find when exec_command can do the same job better', async () => {
+  it('keeps find when exec_command is enabled so searches stay read-only', async () => {
     ctx.readOnly = false;
     ctx.caps = withCaps({ command: true, search: true });
     const names = toolNames(await core('tools/list'));
     expect(names).toContain('exec_command');
-    expect(names).not.toContain('find');
+    expect(names).toContain('find');
   });
 
   it('offers find when there is no shell to search with', async () => {
@@ -1386,13 +1398,13 @@ describe('capability gating', () => {
     expect(names).toContain('exec_command');
   });
 
-  it('does not add find to a surface that started with command execution on', async () => {
+  it('offers find immediately when search and command execution start on together', async () => {
     ctx.readOnly = false;
     ctx.caps = withCaps({ search: true, read: true, command: true });
-    expect(toolNames(await core('tools/list'))).not.toContain('find');
+    expect(toolNames(await core('tools/list'))).toContain('find');
 
-    ctx.caps = withCaps({ search: true, read: true, command: false });
-    expect(toolNames(await core('tools/list'))).not.toContain('find');
+    ctx.caps = withCaps({ search: false, read: true, command: true });
+    expect(toolNames(await core('tools/list'))).toContain('find');
   });
 
   it('always offers read, because that is what the app is for', async () => {
@@ -1559,12 +1571,44 @@ describe('desktop capabilities', () => {
 });
 
 describe('tool annotations', () => {
-  it('keeps connector annotations off copied Codex ToolSpecs', async () => {
+  it('publishes explicit approval annotations for every Core primitive', async () => {
     ctx.readOnly = false;
-    ctx.caps = withCaps({ read: true, create: true, edit: true, move: true, deleteFile: true, command: true });
+    ctx.caps = withCaps({ read: true, search: true, create: true, edit: true, move: true, deleteFile: true, command: true });
     const tools = toolList(await core('tools/list'));
-    for (const name of ['view_image', 'apply_patch', 'exec_command', 'write_stdin']) {
-      expect(tools.find((tool) => tool.name === name)?.annotations, name).toBeUndefined();
+
+    for (const name of ['read', 'view_image', 'find']) {
+      expect(tools.find((tool) => tool.name === name)?.annotations, name).toEqual({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      });
+    }
+    expect(tools.find((tool) => tool.name === 'copy_file')?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    expect(tools.find((tool) => tool.name === 'poll_command')?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false
+    });
+    expect(tools.find((tool) => tool.name === 'apply_patch')?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
+    });
+    for (const name of ['exec_command', 'write_stdin']) {
+      expect(tools.find((tool) => tool.name === name)?.annotations, name).toEqual({
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      });
     }
   });
 
@@ -1574,8 +1618,6 @@ describe('tool annotations', () => {
     const session = toolList(await core('tools/list')).find((tool) => tool.name === 'session');
     expect(read?.annotations?.readOnlyHint).toBe(true);
     expect(read?.annotations?.destructiveHint).toBe(false);
-    // Both session actions are inspection only. Marking this as a write tool makes clients
-    // apply confirmation/write semantics to searching and reading local recordings.
     expect(session?.annotations?.readOnlyHint).toBe(true);
     expect(session?.annotations?.destructiveHint).toBe(false);
   });
@@ -2634,6 +2676,8 @@ describe('exec_command and write_stdin', () => {
           ? "Get-Command rg -CommandType Application | Select-Object -First 1 -ExpandProperty Source"
           : 'command -v rg',
         workdir: '/workspace',
+        // Test the environment handed to the child; a user login profile may rewrite PATH.
+        login: false,
         yield_time_ms: 5_000
       }
     });

@@ -108,12 +108,9 @@ export interface ToolContext {
   /**
    * Whether `find` must stay registered for the lifetime of the endpoint.
    *
-   * `find` and the exec pair are mutually exclusive, and that choice cannot be derived
-   * from `exposedCaps.command` on each request: `exposedCaps` only ever widens, so a user
-   * switching command execution on mid-run would silently *delete* `find` from under a
-   * cached ChatGPT snapshot — the exact stale-snapshot failure the monotonic rule exists
-   * to prevent. So the decision is made once, from the live capabilities, and then only
-   * ever added to. Defaults to the live answer when the caller does not track it.
+   * Search remains a closed-world read-only primitive even when command execution is on,
+   * so harmless repository inspection does not have to travel through unrestricted shell.
+   * Like every other exposed capability, it is monotonic for the endpoint lifetime.
    */
   exposedFind?: boolean;
 }
@@ -610,6 +607,7 @@ function needsWorkspaceIdentity(name: string, args: unknown): boolean {
     return paths.some(relative);
   }
   if (name === 'find') return relative(input['path']);
+  if (name === 'copy_file') return relative(input['source']) || relative(input['destination']);
   if (name === 'apply_patch') {
     // Codex's apply_patch surface has no cwd argument. Relative patch paths therefore always
     // consume the turn/chat cwd analogue maintained by this connector.
@@ -798,7 +796,7 @@ export function createRegistrar(server: McpServer, ctx: ToolContext, surface: Su
   const agentToolsLive = ctx.agentTools ?? getConfig().multiAgent.enabled;
   const sessionToolsExposed = ctx.exposedSessionTools ?? sessionToolsLive;
   const agentToolsExposed = ctx.exposedAgentTools ?? agentToolsLive;
-  const findExposed = ctx.exposedFind ?? (!exposedCaps.command && exposedCaps.search);
+  const findExposed = ctx.exposedFind ?? exposedCaps.search;
   const names: string[] = [];
 
   return {

@@ -1,0 +1,35 @@
+{
+  "source_sha256": "5c427e1ab0c3259a72456685b57e2ae44ca7368ee27f960757cb07bffad6653c",
+  "items": [
+    {
+      "file": "g24-p073-frame188R.png",
+      "sha256": "cf5d624dcfef34d0e79338aed0690650d5e4f69535d20c267cc1d9e306cb77d1",
+      "width": 2200,
+      "height": 3668
+    },
+    {
+      "file": "g24-p074-frame189L.png",
+      "sha256": "341232478212397fadeb5e7e00ed29715f9375aaf792f64e4eb3b95911cb3dbc",
+      "width": 2200,
+      "height": 3681
+    },
+    {
+      "file": "g24-p075-frame189R.png",
+      "sha256": "e37071b07c2a1a31b98a4fed7e4028818420742e68dbd3585282cb9c76918d3d",
+      "width": 2200,
+      "height": 3681
+    },
+    {
+      "file": "g24-p076-frame190L.png",
+      "sha256": "da4f838f425614af1d21c708918f9f1256a9ed1b0bedae0a35e2682e1486a9c1",
+      "width": 2200,
+      "height": 3662
+    },
+    {
+      "file": "g24-p077-frame190R.png",
+      "sha256": "ad8c8632a2c6dc6bde68708faa5a11ee8c62787de708e005fef715be391c01b5",
+      "width": 2200,
+      "height": 3662
+    }
+  ]
+}

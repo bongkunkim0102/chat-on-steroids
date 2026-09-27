@@ -1,0 +1,45 @@
+name: Temporary Gadbury public review release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Build verified canonical review PDF
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --connect-timeout 20 --max-time 180 \
+            'https://archive.org/download/1661-gadbury-john-genethlialogia-or-the-doctrine/1661%20Gadbury_John-Genethlialogia_or_The_doctrine.pdf' -o source.pdf
+          echo '5c427e1ab0c3259a72456685b57e2ae44ca7368ee27f960757cb07bffad6653c  source.pdf' | sha256sum -c -
+          python -m pip install --disable-pip-version-check 'PyMuPDF==1.26.5'
+          python - <<'PY'
+          import fitz, hashlib
+          from pathlib import Path
+          src=fitz.open('source.pdf'); out=fitz.open()
+          for frame in range(188,196):
+              p=src[frame-1]; w=p.rect.width/2; h=p.rect.height
+              for x0 in (0,w):
+                  q=out.new_page(width=w,height=h)
+                  q.show_pdf_page(q.rect,src,frame-1,clip=fitz.Rect(x0,0,x0+w,h))
+          out.save('gadbury24-frames188-195.pdf',garbage=4,deflate=True,clean=True)
+          p=Path('gadbury24-frames188-195.pdf')
+          print('SHA256='+hashlib.sha256(p.read_bytes()).hexdigest())
+          PY
+      - name: Publish temporary release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete gadbury24-review-temp --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create gadbury24-review-temp gadbury24-frames188-195.pdf \
+            --repo "$GITHUB_REPOSITORY" \
+            --title 'Temporary Gadbury 1661 canonical review packet' \
+            --notes 'Public-domain temporary review packet. Delete after transcription.'

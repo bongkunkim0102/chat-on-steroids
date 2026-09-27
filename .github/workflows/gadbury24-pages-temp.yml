@@ -1,0 +1,72 @@
+name: Temporary Gadbury public review Pages
+
+on:
+  push:
+    branches:
+      - scratch/gadbury24-public-review
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    if: ${{ !contains(github.event.head_commit.message, '[pages ready]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: scratch/gadbury24-public-review
+          fetch-depth: 1
+      - name: Build canonical public-domain review site
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --connect-timeout 20 --max-time 180 \
+            'https://archive.org/download/1661-gadbury-john-genethlialogia-or-the-doctrine/1661%20Gadbury_John-Genethlialogia_or_The_doctrine.pdf' -o source.pdf
+          echo '5c427e1ab0c3259a72456685b57e2ae44ca7368ee27f960757cb07bffad6653c  source.pdf' | sha256sum -c -
+          python -m pip install --disable-pip-version-check 'PyMuPDF==1.26.5'
+          mkdir -p site/gadbury24
+          python - <<'PY'
+          import fitz, hashlib, json
+          from pathlib import Path
+          src=fitz.open('source.pdf'); out=Path('site/gadbury24')
+          review=fitz.open(); items=[]
+          for frame,side,printed in [(188,'R',73),(189,'L',74),(189,'R',75),(190,'L',76),(190,'R',77)]:
+              p=src[frame-1]; w=p.rect.width/2; h=p.rect.height; x0=0 if side=='L' else w
+              scale=2400/w
+              pix=p.get_pixmap(matrix=fitz.Matrix(scale,scale),clip=fitz.Rect(x0,0,x0+w,h),alpha=False)
+              name=f'g24-p{printed:03d}-frame{frame}{side}.png'; path=out/name; pix.save(path)
+              q=review.new_page(width=w,height=h); q.show_pdf_page(q.rect,src,frame-1,clip=fitz.Rect(x0,0,x0+w,h))
+              items.append({'printed':printed,'frame':frame,'side':side,'file':name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()})
+          review.save(out/'gadbury24-p73-p77.pdf',garbage=4,deflate=True,clean=True)
+          (out/'manifest.json').write_text(json.dumps({'source_sha256':hashlib.sha256(Path('source.pdf').read_bytes()).hexdigest(),'items':items},indent=2)+'\n')
+          links='\n'.join(f'<li><a href="{x["file"]}">Printed p{x["printed"]}</a></li>' for x in items)
+          (out/'index.html').write_text(f'<!doctype html><meta charset="utf-8"><title>Gadbury 1661 review</title><h1>Gadbury 1661 canonical review</h1><p><a href="gadbury24-p73-p77.pdf">Review PDF p73-p77</a></p><ul>{links}</ul>')
+          PY
+          touch site/.nojekyll
+      - name: Publish gh-pages branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd site
+          git init
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b gh-pages
+          git add .
+          git commit -m 'Publish temporary Gadbury review pages [pages ready]'
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin gh-pages
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Enable Pages from gh-pages branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' || \
+          gh api -X PUT "repos/${GITHUB_REPOSITORY}/pages" -f 'source[branch]=gh-pages' -f 'source[path]=/' || true
+          echo "PAGES_URL=https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/gadbury24/"

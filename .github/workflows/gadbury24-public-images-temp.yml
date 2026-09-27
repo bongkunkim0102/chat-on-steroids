@@ -1,0 +1,47 @@
+name: Temporary Gadbury public review images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: scratch/gadbury24-public-review
+          fetch-depth: 1
+      - name: Render canonical public-domain review images
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --connect-timeout 20 --max-time 180 \
+            'https://archive.org/download/1661-gadbury-john-genethlialogia-or-the-doctrine/1661%20Gadbury_John-Genethlialogia_or_The_doctrine.pdf' -o source.pdf
+          echo '5c427e1ab0c3259a72456685b57e2ae44ca7368ee27f960757cb07bffad6653c  source.pdf' | sha256sum -c -
+          python -m pip install --disable-pip-version-check 'PyMuPDF==1.26.5'
+          python - <<'PY'
+          import fitz, hashlib, json
+          from pathlib import Path
+          src=fitz.open('source.pdf'); out=Path('gadbury24-review-images'); out.mkdir(exist_ok=True)
+          items=[]
+          for frame,side,printed in [(188,'R',73),(189,'L',74),(189,'R',75),(190,'L',76),(190,'R',77)]:
+              p=src[frame-1]; w=p.rect.width/2; h=p.rect.height; x0=0 if side=='L' else w
+              scale=2200/w
+              pix=p.get_pixmap(matrix=fitz.Matrix(scale,scale),clip=fitz.Rect(x0,0,x0+w,h),alpha=False)
+              path=out/f'g24-p{printed:03d}-frame{frame}{side}.png'; pix.save(path)
+              items.append({'file':path.name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'width':pix.width,'height':pix.height})
+          (out/'manifest.json').write_text(json.dumps({'source_sha256':hashlib.sha256(Path('source.pdf').read_bytes()).hexdigest(),'items':items},indent=2)+'\n')
+          PY
+      - name: Commit images to temporary public branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add gadbury24-review-images
+          git commit -m 'Add temporary Gadbury canonical review images [skip release]' || true
+          git push origin HEAD:scratch/gadbury24-public-review

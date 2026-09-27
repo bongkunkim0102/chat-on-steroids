@@ -1,0 +1,57 @@
+name: Temporary Gadbury public review packet
+
+on:
+  push:
+    branches:
+      - scratch/gadbury24-public-review
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build verified canonical review PDF
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --connect-timeout 20 --max-time 180 \
+            'https://archive.org/download/1661-gadbury-john-genethlialogia-or-the-doctrine/1661%20Gadbury_John-Genethlialogia_or_The_doctrine.pdf' -o source.pdf
+          echo '5c427e1ab0c3259a72456685b57e2ae44ca7368ee27f960757cb07bffad6653c  source.pdf' | sha256sum -c -
+          python -m pip install --disable-pip-version-check 'PyMuPDF==1.26.5'
+          python - <<'PY'
+          import fitz, hashlib, json
+          from pathlib import Path
+          src=fitz.open('source.pdf'); out=fitz.open(); mapping=[]
+          for frame in range(188,196):
+              p=src[frame-1]; w=p.rect.width/2; h=p.rect.height
+              for side,x0 in [('L',0),('R',w)]:
+                  mapping.append({'review_page_index_0':len(out),'frame':frame,'side':side})
+                  q=out.new_page(width=w,height=h)
+                  q.show_pdf_page(q.rect,src,frame-1,clip=fitz.Rect(x0,0,x0+w,h))
+          out.save('gadbury24-188-195.pdf',garbage=4,deflate=True,clean=True)
+          pdf=Path('gadbury24-188-195.pdf')
+          Path('gadbury24-188-195.json').write_text(json.dumps({
+              'source_sha256':hashlib.sha256(Path('source.pdf').read_bytes()).hexdigest(),
+              'pdf_sha256':hashlib.sha256(pdf.read_bytes()).hexdigest(),
+              'pdf_bytes':pdf.stat().st_size,
+              'mapping':mapping
+          },indent=2)+'\n')
+          PY
+
+      - name: Commit packet to temporary branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add gadbury24-188-195.pdf gadbury24-188-195.json
+          git commit -m 'Add temporary Gadbury canonical review PDF [skip ci]'
+          git push origin HEAD
